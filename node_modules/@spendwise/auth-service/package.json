@@ -1,0 +1,11 @@
+{
+  "name": "@spendwise/auth-service",
+  "version": "1.0.0",
+  "main": "src/server.ts",
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "start": "node dist/server.js",
+    "build": "tsc",
+    "seed": "tsx src/seed.ts"
+  }
+}

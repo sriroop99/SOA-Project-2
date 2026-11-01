@@ -1,0 +1,176 @@
+services:
+  # Persistent PostgreSQL 17 Database
+  postgres:
+    image: postgres:17-alpine
+    container_name: spendwise-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_DB: spendwise
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/migrations:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - spendwise-net
+
+  # Microservice 1: Authentication Service
+  auth-service:
+    build:
+      context: .
+      dockerfile: services/auth-service/Dockerfile
+    container_name: spendwise-auth
+    restart: unless-stopped
+    environment:
+      AUTH_SERVICE_PORT: 5001
+      JWT_SECRET: spendwise_super_secret_jwt_key_2026_review2_cluster1
+      JWT_REFRESH_SECRET: spendwise_super_secret_refresh_key_2026_review2
+      DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/spendwise
+    ports:
+      - "5001:5001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - spendwise-net
+
+  # Microservice 2A: Expense Service Instance 1
+  expense-service-1:
+    build:
+      context: .
+      dockerfile: services/expense-service/Dockerfile
+    container_name: spendwise-expense-1
+    restart: unless-stopped
+    environment:
+      PORT: 5002
+      INSTANCE_ID: expense-service-1
+      DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/spendwise
+    ports:
+      - "5002:5002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - spendwise-net
+
+  # Microservice 2B: Expense Service Instance 2
+  expense-service-2:
+    build:
+      context: .
+      dockerfile: services/expense-service/Dockerfile
+    container_name: spendwise-expense-2
+    restart: unless-stopped
+    environment:
+      PORT: 5003
+      INSTANCE_ID: expense-service-2
+      DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/spendwise
+    ports:
+      - "5003:5003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - spendwise-net
+
+  # Nginx Load Balancer for Stateless Expense Service Cluster
+  nginx-lb:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    container_name: spendwise-nginx-lb
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      - expense-service-1
+      - expense-service-2
+    networks:
+      - spendwise-net
+
+  # Microservice 3: Budget and Reconciliation Service
+  budget-service:
+    build:
+      context: .
+      dockerfile: services/budget-service/Dockerfile
+    container_name: spendwise-budget
+    restart: unless-stopped
+    environment:
+      BUDGET_SERVICE_PORT: 5004
+      EXPENSE_SERVICE_URL: http://nginx-lb:8080
+      DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/spendwise
+    ports:
+      - "5004:5004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - spendwise-net
+
+  # Microservice 4: Analytics and Reporting Service
+  analytics-service:
+    build:
+      context: .
+      dockerfile: services/analytics-service/Dockerfile
+    container_name: spendwise-analytics
+    restart: unless-stopped
+    environment:
+      ANALYTICS_SERVICE_PORT: 5005
+      DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/spendwise
+    ports:
+      - "5005:5005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - spendwise-net
+
+  # Single Entrypoint API Gateway
+  api-gateway:
+    build:
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
+    container_name: spendwise-gateway
+    restart: unless-stopped
+    environment:
+      GATEWAY_PORT: 5000
+      AUTH_SERVICE_URL: http://auth-service:5001
+      EXPENSE_SERVICE_URL: http://nginx-lb:8080
+      BUDGET_SERVICE_URL: http://budget-service:5004
+      ANALYTICS_SERVICE_URL: http://analytics-service:5005
+    ports:
+      - "5000:5000"
+    depends_on:
+      - auth-service
+      - nginx-lb
+      - budget-service
+      - analytics-service
+    networks:
+      - spendwise-net
+
+  # Frontend React Web Application
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: spendwise-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api-gateway
+    networks:
+      - spendwise-net
+
+volumes:
+  postgres_data:
+
+networks:
+  spendwise-net:
+    driver: bridge
